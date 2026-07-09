@@ -2,89 +2,50 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## What this is
 
-Static HTML/CSS portfolio website deployed to AWS using S3 + CloudFront, provisioned with Terraform, and automated via GitHub Actions.
+A **static HTML/CSS portfolio website** (single-page site for "Pravin Mishra") used as the deployable artifact in a **DevOps Micro Internship (DMI)** course. Students deploy this site to prove they can host a static site in production.
 
-## Architecture
+Pure HTML5 + CSS3 — **no JavaScript, no build step, no package manager, no tests, no linter.** Files are served as-is. "Building" means copying files to a web root.
 
-### Application (Static Site)
-- **index.html** — Single-page portfolio (About, Services, Courses, Books, Community, Contact)
-- **style.css** — All styling (~1145 lines), mobile-first responsive (breakpoints: 900px, 768px, 600px)
-- **privacy.html / terms.html** — Standalone pages with inline styles
-- **images/** — Static assets (logo, profile, course thumbnails, hero background)
-- Pure HTML5 + CSS3, no JavaScript, no build step
+## Structure
 
-### Infrastructure (`terraform/`)
-- AWS S3 bucket for static site hosting (private, OAC-based access)
-- CloudFront distribution as CDN with S3 origin
-- GitHub OIDC provider + IAM role for keyless CI/CD auth
-- Terraform state stored in S3 backend with DynamoDB locking
-- All resources tagged with `Project` and `Environment`
+- `index.html` — the whole site. One page, ordered sections: navbar → hero (`#home`) → about → services → courses → books → community/trust → contact → footer. Section `id`s are the in-page nav anchors; keep them in sync with the `<nav>` links.
+- `style.css` — all styling (~1145 lines), mobile-first responsive. Breakpoints at **900px, 768px, 600px**. This one file styles `index.html`; the two policy pages use their own inline styles instead.
+- `privacy.html`, `terms.html` — standalone policy pages with **inline `<style>` blocks** (they do not use `style.css`). Linked from the footer.
+- `images/` — all assets (logo, hero, signature, book covers, course thumbnail). Course thumbnails for external courses are hot-linked from Udemy CDN in `index.html`, not stored here.
 
-### CI/CD (`.github/workflows/`)
-- GitHub Actions workflow triggers on push to `main`
-- Syncs site files to S3, then invalidates CloudFront cache
-- Uses OIDC for AWS authentication (no long-lived keys)
+## Local preview
 
-## MCP Servers (`.mcp.json`)
-
-Two MCP servers are configured for Claude Code:
-- **aws** (`awslabs.aws-api-mcp-server`) — Direct AWS API access for querying and managing resources
-- **terraform** (`hashicorp/terraform-mcp-server`) — Terraform operations via Docker, workspace mounted at `/workspace`
-
-AWS credentials and region are configured in `.claude/settings.local.json` (gitignored), not in `.mcp.json`. This keeps secrets out of version control and provides a single source of truth for all tools.
-
-## Custom Agents (`.claude/agents/`)
-
-This project has 4 specialized subagents. Use them by name when delegating tasks:
-- **tf-writer** — generates Terraform code (has Write access + project memory)
-- **security-auditor** — audits TF for security issues (Read-only, Sonnet)
-- **cost-optimizer** — reviews infra cost (Read-only, Haiku)
-- **drift-detector** — detects state drift (Bash, Haiku)
-
-## Skills (`.claude/skills/`)
-
-All infrastructure and deployment tasks are handled via skills. Do not write Terraform or CI/CD code manually — use the appropriate skill. Action skills have `disable-model-invocation: true` (manual only). The `project-scope` skill has `user-invocable: false` (auto-loaded by Claude as background knowledge).
-
-```
-/scaffold-terraform [region] [name]  → Generate all Terraform files (uses tf-writer agent)
-/scaffold-cicd [aws-account-id]      → Generate GitHub Actions + OIDC IAM role
-/tf-plan                             → Run terraform plan + risk analysis
-/tf-apply                            → Run terraform apply + verify
-/deploy                              → Sync S3 + invalidate CloudFront
-/infra-status                        → Health dashboard of all resources
-/infra-audit                         → Parallel security + cost + drift audit (forked context)
-/setup-gh-actions [create|validate]  → Create or validate CI workflow
-/tf-destroy                          → Safe destroy with confirmation
-project-scope                        → Background knowledge: AWS service constraints (auto-loaded)
-/commit                              → Auto-generate commit message (built-in)
-/compact                             → Compress long conversation context (built-in)
-```
-
-## Commands
+No server needed — open the file directly:
 
 ```bash
-# Terraform
-cd terraform && terraform init
-cd terraform && terraform plan
-cd terraform && terraform apply
-
-# Local preview
-open index.html
-
-# Manual S3 sync (CI does this automatically)
-aws s3 sync . s3://$BUCKET_NAME --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "*.md" --exclude ".claude/*"
+open index.html          # macOS
+start index.html         # Windows
 ```
 
-## Safety Layers
-1. **UserPromptSubmit hook** — catches destructive intent ("delete all", "nuke", "wipe") before Claude starts
-2. **PreToolUse hook** — blocks dangerous commands (terraform destroy, aws s3 rm) at execution time
-3. **Permissions** — auto-allows safe reads, blocks IAM and rm -rf
-4. **PostToolUse hook** — logs all terraform apply executions to `.claude/deploy.log`
+## Deployment: the DMI exercise
 
-## Conventions
-- Terraform files use `terraform/` directory with standard layout (main.tf, variables.tf, outputs.tf)
-- GitHub Actions uses OIDC — no stored AWS access keys
-- All infrastructure changes go through Terraform — never modify AWS resources manually
-- Site content changes deploy automatically via GitHub Actions on push to main
+The README defines the assignment: deploy this site to an **Ubuntu VM running Nginx** and keep it live 24h, accessible at `http://<public-ip>`.
+
+**Mandatory ownership-proof rule:** before deploying, edit the footer in `index.html` (the "Crafted with cloud excellence" line, near the end of `<footer>`) to add a "Deployed by: ..." line. This proof must be visible in the browser screenshot submission. Do not skip this — it is a graded requirement, not decoration.
+
+Typical Nginx deploy:
+
+```bash
+sudo apt update && sudo apt install -y nginx
+sudo cp -r index.html privacy.html terms.html style.css images/ /var/www/html/
+sudo systemctl enable --now nginx
+```
+
+## AWS automation layer (in git history, NOT on disk)
+
+Earlier commits contained an AWS deployment stack — a `CLAUDE.md`, Terraform-scaffolding/plan/apply/deploy skills under `.claude/skills/`, and a GitHub Actions workflow (`.github/workflows/deploy.yml`) — targeting **S3 + CloudFront** with GitHub OIDC. These files are currently **deleted from the working tree** (see `git status`); the `terraform/`, `.mcp.json`, and `.claude/agents/` directories they referenced never existed on disk in this checkout.
+
+If asked to work on cloud deployment, first `git restore .` to bring the deleted files back, then note that the workflow hardcodes the **original author's** AWS account ID, S3 bucket (`pravinmishradmi-site-production`), and CloudFront distribution ID (`E3V6O6MRE2E21P`) — these must be re-pointed at the user's own AWS resources before anything will run. Do not treat that stack as live infrastructure.
+
+## Editing conventions
+
+- Content is authored directly in the HTML — edit the markup in place; there is no templating or data file.
+- When adding a nav section, update both the desktop `.nav-links` and the `#mobileMenu` block in `index.html`, and add a matching `id` on the target `<section>`.
+- Keep responsive changes within the existing 900/768/600 breakpoint structure in `style.css` rather than introducing new breakpoints.
